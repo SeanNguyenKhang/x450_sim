@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Setup: link into PX4",
+      "type": "shell",
+      "command": "bash ${workspaceFolder}/scripts/setup.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "SITL: x450 (default world)",
+      "type": "shell",
+      "command": "make px4_sitl gz_x450",
+      "options": {
+        "cwd": "${env:HOME}/PX4-Autopilot",
+        "env": { "PX4_HOME_LAT": "10.578723", "PX4_HOME_LON": "106.416590", "PX4_HOME_ALT": "6" }
+      },
+      "dependsOn": "Setup: link into PX4",
+      "problemMatcher": []
+    },
+    {
+      "label": "SITL: x450 camera + rice field",
+      "type": "shell",
+      "command": "make px4_sitl gz_x450_cam_down",
+      "options": {
+        "cwd": "${env:HOME}/PX4-Autopilot",
+        "env": { "PX4_GZ_WORLD": "rice", "PX4_HOME_LAT": "10.578723", "PX4_HOME_LON": "106.416590", "PX4_HOME_ALT": "6" }
+      },
+      "dependsOn": "Setup: link into PX4",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    }
+  ]
+}
