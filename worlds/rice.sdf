@@ -13,6 +13,75 @@
     <gravity>0 0 -9.8</gravity>
     <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
     <atmosphere type="adiabatic"/>
+
+    <!--
+      Systems. Because this world declares plugins, Gazebo IGNORES PX4's
+      src/modules/simulation/gz_bridge/server.config (GZ_SIM_SERVER_CONFIG_PATH),
+      so its whole list is repeated here. Keep it in sync if PX4 adds systems there.
+    -->
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-air-pressure-system" name="gz::sim::systems::AirPressure"/>
+    <plugin filename="gz-sim-air-speed-system" name="gz::sim::systems::AirSpeed"/>
+    <plugin filename="gz-sim-apply-link-wrench-system" name="gz::sim::systems::ApplyLinkWrench"/>
+    <plugin filename="gz-sim-navsat-system" name="gz::sim::systems::NavSat"/>
+    <plugin filename="gz-sim-magnetometer-system" name="gz::sim::systems::Magnetometer"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="libOpticalFlowSystem.so" name="custom::OpticalFlowSystem"/>
+    <plugin filename="libGstCameraSystem.so" name="custom::GstCameraSystem"/>
+
+    <!--
+      Wind. Mean wind = <wind> below (0 = calm); change it while flying with
+      scripts/wind.sh. WindEffects adds gusts on top of the mean wind and pushes
+      every link with <enable_wind>true</enable_wind> (x450 base_link).
+      MEASURED in Gazebo Harmonic 8.15 (free-floating box test, 2026-11-09):
+        F = c * mass * (v_wind - v_link),  c = k^2,  k = force_approximation_scaling_factor
+        (independent of altitude; k = 0.1 gives only c = 0.01 1/s!)
+      k = 0.55 -> c = 0.30 1/s -> ~2.0 N at 5 m/s for 1.34 kg (~8 deg tilt):
+      lumped linear drag typical of 1-1.5 kg quadrotors. Estimate, NOT measured
+      on the real X450 - calibrate if you get flight data.
+    -->
+    <plugin filename="gz-sim-wind-effects-system" name="gz::sim::systems::WindEffects">
+      <force_approximation_scaling_factor>0.55</force_approximation_scaling_factor>
+      <horizontal>
+        <magnitude>
+          <time_for_rise>5</time_for_rise>
+          <sin>
+            <amplitude_percent>0.2</amplitude_percent>
+            <period>8</period>
+          </sin>
+          <noise type="gaussian">
+            <mean>0</mean>
+            <stddev>0.1</stddev>
+          </noise>
+        </magnitude>
+        <direction>
+          <time_for_rise>10</time_for_rise>
+          <sin>
+            <amplitude>10</amplitude>
+            <period>25</period>
+          </sin>
+          <noise type="gaussian">
+            <mean>0</mean>
+            <stddev>0.05</stddev>
+          </noise>
+        </direction>
+      </horizontal>
+      <vertical>
+        <noise type="gaussian">
+          <mean>0</mean>
+          <stddev>0.05</stddev>
+        </noise>
+      </vertical>
+    </plugin>
+    <wind>
+      <linear_velocity>0 0 0</linear_velocity>
+    </wind>
     <scene>
       <grid>false</grid>
       <ambient>0.4 0.4 0.4 1</ambient>

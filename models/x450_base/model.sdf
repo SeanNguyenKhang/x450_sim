@@ -18,6 +18,8 @@
         </inertia>
       </inertial>
       <gravity>true</gravity>
+      <!-- body drag + wind from WindEffects (worlds/rice.sdf); no effect in worlds without it -->
+      <enable_wind>true</enable_wind>
       <velocity_decay />
       <visual name="base_link_visual">
         <pose>0 0 .025 0 0 3.141592654</pose>
