@@ -2,9 +2,10 @@
 """
 Generate a lawn-mower (boustrophedon) survey mission as a QGroundControl .plan.
 
-Mission: TAKEOFF to ALT -> DO_CHANGE_SPEED -> N-S survey lines -> RTL.
-Lines run North-South over the rice plot (tools/field_site.py) and are spaced
-along East-West. The start corner is the one nearest to home.
+Mission: TAKEOFF to ALT -> DO_CHANGE_SPEED -> survey lines -> RTL.
+Lines run along the paddy banks (plot +y axis, bearing 343.4 deg, see
+tools/field_site.py) and are spaced across the plot. The start corner is the
+one nearest to home (SE corner of the paddy).
 
 Line spacing:  --spacing S (m)  or  --overlap P (side overlap, 0..1).
   Camera footprint across track = 2 * ALT * tan(HFOV / 2)
@@ -21,7 +22,7 @@ import json
 import math
 from pathlib import Path
 
-from field_site import HOME_LAT, HOME_LON, PLOT_CENTER, PLOT_SIZE, enu_to_latlon
+from field_site import HOME_LAT, HOME_LON, PLOT_SIZE, PLOT_YAW_DEG, enu_to_latlon, plot_to_enu
 
 REPO = Path(__file__).resolve().parent.parent
 CAM_HFOV = 1.855  # rad, models/caddx_cam (image width is across track)
@@ -44,30 +45,28 @@ def parse_args():
 
 
 def survey_lines(alt, spacing):
-    """Return list of ((x0,y0),(x1,y1)) N-S lines in ENU, serpentine order."""
+    """Return list of ((x0,y0),(x1,y1)) lines in world ENU, serpentine order."""
     footprint = 2 * alt * math.tan(CAM_HFOV / 2)
     n = max(1, math.ceil(max(PLOT_SIZE - footprint, 0) / spacing) + 1)
-    cx, cy = PLOT_CENTER
     half = PLOT_SIZE / 2
-    xs = [cx + (i - (n - 1) / 2) * spacing for i in range(n)]
-    ys, yn = cy - half, cy + half
+    xs = [(i - (n - 1) / 2) * spacing for i in range(n)]   # plot frame, across
 
-    # pick start corner nearest to home (0, 0)
+    # pick the start corner nearest to home (world origin)
     best = None
-    for west_first in (True, False):
-        for south_first in (True, False):
-            order = xs if west_first else xs[::-1]
-            y0 = ys if south_first else yn
-            d = math.hypot(order[0], y0)
+    for order in (xs, xs[::-1]):
+        for y0 in (-half, half):
+            d = math.hypot(*plot_to_enu(order[0], y0))
             if best is None or d < best[0]:
-                best = (d, order, south_first)
-    _, order, south_first = best
+                best = (d, order, y0)
+    _, order, y0 = best
 
     lines = []
     for i, x in enumerate(order):
-        up = (i % 2 == 0) == south_first   # True: fly south -> north
-        lines.append(((x, ys), (x, yn)) if up else ((x, yn), (x, ys)))
-    return lines, footprint
+        a, b = (x, y0), (x, -y0)
+        if i % 2:
+            a, b = b, a
+        lines.append((plot_to_enu(*a), plot_to_enu(*b)))
+    return lines
 
 
 def item(seq, cmd, frame, params):
@@ -79,7 +78,7 @@ def main():
     a = parse_args()
     footprint = 2 * a.alt * math.tan(CAM_HFOV / 2)
     spacing = a.spacing if a.spacing else footprint * (1 - a.overlap)
-    lines, _ = survey_lines(a.alt, spacing)
+    lines = survey_lines(a.alt, spacing)
 
     items = [item(1, NAV_TAKEOFF, FRAME_GLOBAL_REL_ALT,
                   [0, 0, 0, None, HOME_LAT, HOME_LON, a.alt]),
@@ -114,8 +113,9 @@ def main():
     side = 1 - spacing / footprint
     print(f"{out}")
     print(f"  alt {a.alt:g} m, speed {a.speed:g} m/s, footprint {footprint:.1f} m across track")
-    print(f"  {len(lines)} lines N-S, spacing {spacing:.2f} m (side overlap {side * 100:.0f} %)")
-    print(f"  line x (ENU): " + ", ".join(f"{ln[0][0]:.1f}" for ln in lines))
+    print(f"  {len(lines)} lines along bearing {(-PLOT_YAW_DEG) % 360:.1f} deg, "
+          f"spacing {spacing:.2f} m (side overlap {side * 100:.0f} %)")
+    print("  waypoints ENU: " + "  ".join(f"({x:.1f},{y:.1f})" for x, y in wps))
     print(f"  path ~{length:.0f} m incl. transit, ~{length / a.speed / 60:.1f} min at {a.speed:g} m/s")
 
 

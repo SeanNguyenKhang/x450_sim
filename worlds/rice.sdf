@@ -1,7 +1,8 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <!--
   X450 survey world: PX4 default world + rice field texture.
-  Origin set to the home point 10.578723 N, 106.416590 E (Thu Thua, Long An).
+  Origin set to the home point 10.578681 N, 106.416747 E (Thu Thua, Long An)
+  = SE corner of the surveyed paddy (see tools/field_site.py).
 -->
 <sdf version="1.9">
   <world name="rice">
@@ -162,8 +163,8 @@
     <spherical_coordinates>
       <surface_model>EARTH_WGS84</surface_model>
       <world_frame_orientation>ENU</world_frame_orientation>
-      <latitude_deg>10.578723</latitude_deg>
-      <longitude_deg>106.416590</longitude_deg>
+      <latitude_deg>10.578681</latitude_deg>
+      <longitude_deg>106.416747</longitude_deg>
       <elevation>6</elevation>
     </spherical_coordinates>
 
