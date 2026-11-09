@@ -2,28 +2,38 @@
 
 World frame = ENU (x east, y north), origin = home point (worlds/rice.sdf).
 Home = SE corner of the surveyed paddy (Thu Thua, Long An).
-Field corners: Google Maps right-click, 2026-11-09.
 
-The 50 x 50 m survey plot is aligned with the paddy's long banks (East bank
-bearing 343.4 deg) and centred across the paddy width (>= 0.8 m from every
-bank); it does not fit with true N-S sides. Plot frame: origin = plot centre,
-+y = along the banks (to the NNW), +x = across (to the ENE).
+Survey frame (origin = home):
+  +v ("along")  = along the East (right) bank, bearing BANK_BEARING_DEG (to the NNW)
+  +u ("right")  = perpendicular, to the ENE; the paddy lies at u <= 0 (to the left)
+The bank directions were measured on the QGroundControl map (2026-11-09):
+the user's Google NE corner gives 343.4 deg for the East bank, but both the
+QGC map and the Google texture show ~348 deg, so the NE corner is likely off.
+
+Lawn-mower lines: line k (k = 0, 1, ...) at u = -k * spacing, from
+START_MARGIN inside the South bank, LINE_LENGTH long; line 1 starts at home.
 """
 import math
 
 HOME_LAT = 10.578681      # deg, = PX4_HOME_LAT and <spherical_coordinates>
 HOME_LON = 106.416747     # deg
 
-FIELD_CORNERS = {         # lat, lon (clockwise from home)
+FIELD_CORNERS = {         # lat, lon from Google Maps right-click (reference only)
     "SE": (10.578681, 106.416747),
     "SW": (10.578613057140691, 106.41626497992594),
     "NW": (10.579258369698373, 106.41608393081952),
     "NE": (10.579284076707623, 106.41656404622385),
 }
 
-PLOT_SIZE = 50.0             # survey plot side [m]
-PLOT_CENTER = (-34.29, 24.63)  # plot centre in world ENU [m]
-PLOT_YAW_DEG = 16.61         # plot +y axis rotated CCW from North (= bearing 343.4 deg)
+BANK_BEARING_DEG = 348.0        # East (right) bank, measured on the QGC map
+SOUTH_BANK_BEARING_DEG = 265.8  # South bank through home, measured on the QGC map
+START_MARGIN = 5.0              # line bottoms this far inside the South bank [m]
+LINE_LENGTH = 50.0              # survey length of every line [m]
+SURVEY_WIDTH = 50.0             # lines stay within u in [-SURVEY_WIDTH, 0] [m]
+
+YAW = math.radians(360.0 - BANK_BEARING_DEG)   # ENU yaw of the survey frame (CCW)
+# South bank rises (toward +v) when going left, by this angle:
+SKEW = math.radians((SOUTH_BANK_BEARING_DEG - (BANK_BEARING_DEG - 90.0)) % 360.0)
 
 _M_PER_DEG_LAT = 111320.0
 _M_PER_DEG_LON = 111320.0 * math.cos(math.radians(HOME_LAT))
@@ -38,13 +48,12 @@ def latlon_to_enu(lat, lon):
     return (lon - HOME_LON) * _M_PER_DEG_LON, (lat - HOME_LAT) * _M_PER_DEG_LAT
 
 
-def plot_to_enu(px, py):
-    """Plot frame (metres from plot centre) -> world ENU."""
-    c, s = math.cos(math.radians(PLOT_YAW_DEG)), math.sin(math.radians(PLOT_YAW_DEG))
-    return PLOT_CENTER[0] + c * px - s * py, PLOT_CENTER[1] + s * px + c * py
+def survey_to_enu(u, v):
+    """Survey frame (u right, v along the bank) -> world ENU."""
+    c, s = math.cos(YAW), math.sin(YAW)
+    return c * u - s * v, s * u + c * v
 
 
-def enu_to_plot(x, y):
-    c, s = math.cos(math.radians(PLOT_YAW_DEG)), math.sin(math.radians(PLOT_YAW_DEG))
-    dx, dy = x - PLOT_CENTER[0], y - PLOT_CENTER[1]
-    return c * dx + s * dy, -s * dx + c * dy
+def south_bank_v(u):
+    """Along-bank coordinate v of the South bank at lateral position u (u <= 0)."""
+    return -u * math.tan(SKEW)

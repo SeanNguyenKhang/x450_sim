@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
-Generate models/rice_plot: a 3D direct-seeded rice plot (~17 days after sowing)
-for the X450 survey world.
+Generate models/rice_plot: 3D direct-seeded rice (~17 days after sowing)
+covering the survey area of the X450 world.
 
 Output (everything inside models/rice_plot is overwritten, do not edit by hand):
   model.config, model.sdf     Gazebo model, included by worlds/rice.sdf
   meshes/d<C>_v<V>.stl        tile meshes: density class C, random variant V
+  meshes/soil.stl             mud under the plants
   ground_truth.csv            real plant count of every tile (world ENU + lat/lon)
 
-How it works
-  - The plot (default 50 x 50 m) is split into square tiles (default 2 x 2 m).
-  - A smooth random density map (plants/m^2) is drawn over the tiles and
-    quantised into a few density classes.
-  - For each class a few tile meshes are generated (random plant positions);
-    each tile in the field uses one of them, rotated by 0/90/180/270 deg,
+Layout (survey frame of tools/field_site.py, origin = home = SE paddy corner):
+  - columns of square tiles (default 2 x 2 m) from the East bank to the left,
+    --width metres wide; each column starts at the South bank and runs
+    --length metres along the bank, so the plot follows both banks
+    (default 52 x 66 m: every survey line + the 16 x 9 m camera footprint).
+  - a smooth random density map (plants/m^2) is quantised into a few classes;
+    each class has a few random tile meshes, placed rotated by 0/90/180/270 deg
     so the field does not look repeated.
-  - One plant = 3..4 leaves; one leaf = one thin triangle, written with both
+  - one plant = 3..4 leaves; one leaf = one thin triangle, written with both
     windings so it is visible from both sides. Visual only: no collision,
     no shadows (keeps physics and rendering cheap).
 
@@ -30,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-from field_site import PLOT_CENTER, PLOT_SIZE, PLOT_YAW_DEG, enu_to_latlon
+from field_site import YAW, enu_to_latlon, south_bank_v, survey_to_enu
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -40,12 +42,9 @@ def parse_args():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--out", type=Path, default=REPO / "models" / "rice_plot")
     p.add_argument("--seed", type=int, default=17)
-    p.add_argument("--size", type=float, default=PLOT_SIZE, help="plot side [m]")
+    p.add_argument("--width", type=float, default=52.0, help="across the banks, from East bank [m]")
+    p.add_argument("--length", type=float, default=66.0, help="along the banks, from South bank [m]")
     p.add_argument("--tile", type=float, default=2.0, help="tile side [m]")
-    p.add_argument("--center", type=float, nargs=2, default=list(PLOT_CENTER),
-                   metavar=("X", "Y"), help="plot centre in world ENU [m]")
-    p.add_argument("--yaw", type=float, default=PLOT_YAW_DEG,
-                   help="plot rotation, CCW from North [deg]")
     p.add_argument("--z", type=float, default=0.02, help="ground height [m]")
     p.add_argument("--density-min", type=float, default=80.0, help="plants/m^2")
     p.add_argument("--density-max", type=float, default=320.0, help="plants/m^2")
@@ -98,12 +97,13 @@ def write_stl(path, tris):
 
 
 # ---------------------------------------------------------------- density map
-def density_map(rng, n, dmin, dmax):
-    """Smooth random field on an n x n tile grid, scaled to [dmin, dmax]."""
-    g = np.zeros((n, n))
-    yy, xx = np.mgrid[0:n, 0:n]
+def density_map(rng, ny, nx, dmin, dmax):
+    """Smooth random field on an ny x nx tile grid, scaled to [dmin, dmax]."""
+    g = np.zeros((ny, nx))
+    yy, xx = np.mgrid[0:ny, 0:nx]
+    n = max(nx, ny)
     for _ in range(10):  # sum of random Gaussian bumps (dense and sparse patches)
-        cx, cy = rng.uniform(0, n, 2)
+        cx, cy = rng.uniform(0, nx), rng.uniform(0, ny)
         s = rng.uniform(n / 10, n / 4)
         g += rng.uniform(-1, 1) * np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * s * s))
     g = (g - g.min()) / max(np.ptp(g), 1e-9)
@@ -114,7 +114,7 @@ def density_map(rng, n, dmin, dmax):
 def main():
     a = parse_args()
     rng = np.random.default_rng(a.seed)
-    n = int(round(a.size / a.tile))
+    nx, ny = int(round(a.width / a.tile)), int(round(a.length / a.tile))
     area = a.tile * a.tile
     levels = np.linspace(a.density_min, a.density_max, a.classes)
 
@@ -125,7 +125,7 @@ def main():
         shutil.rmtree(out)
     (out / "meshes").mkdir(parents=True)
 
-    # 1. tile meshes
+    # 1. tile meshes + soil
     counts = {}      # (class, variant) -> plants
     tile_tris = {}   # (class, variant) -> triangles
     for c, d in enumerate(levels):
@@ -134,23 +134,25 @@ def main():
             tris = make_tile(rng, n_pl, a.tile, a.height, a.leaf_width)
             tile_tris[(c, v)] = write_stl(out / "meshes" / f"d{c}_v{v}.stl", tris)
             counts[(c, v)] = n_pl
-    total_tris = 0
+    W, L = nx * a.tile, ny * a.tile
+    se, sw = (0.0, 0.0), (-W, south_bank_v(-W))           # model frame = survey frame
+    nw, ne = (sw[0], sw[1] + L), (0.0, L)
+    soil = np.array([[(*se, 0), (*ne, 0), (*nw, 0)], [(*se, 0), (*nw, 0), (*sw, 0)]], np.float32)
+    write_stl(out / "meshes" / "soil.stl", soil)
 
-    # 2. place tiles
-    dens = density_map(rng, n, a.density_min, a.density_max)
+    # 2. place tiles: model frame = survey frame (x = u right, y = v along the bank)
+    dens = density_map(rng, ny, nx, a.density_min, a.density_max)
     cls = np.abs(dens[..., None] - levels).argmin(axis=-1)
-    cy_, sy_ = math.cos(math.radians(a.yaw)), math.sin(math.radians(a.yaw))
 
-    visuals, rows = [], []
-    for iy in range(n):
-        for ix in range(n):
+    visuals, rows, total_tris = [], [], 0
+    for iy in range(ny):
+        for ix in range(nx):
             c = int(cls[iy, ix])
             v = int(rng.integers(a.variants))
             yaw = int(rng.integers(4)) * math.pi / 2
-            lx = -a.size / 2 + (ix + 0.5) * a.tile        # model frame
-            ly = -a.size / 2 + (iy + 0.5) * a.tile
-            wx = a.center[0] + cy_ * lx - sy_ * ly         # world ENU
-            wy = a.center[1] + sy_ * lx + cy_ * ly
+            lx = -(ix + 0.5) * a.tile                     # to the left of the East bank
+            ly = south_bank_v(lx) + (iy + 0.5) * a.tile   # from the South bank
+            wx, wy = survey_to_enu(lx, ly)                # world ENU
             total_tris += tile_tris[(c, v)]
             visuals.append(f"""      <visual name="t_{ix:02d}_{iy:02d}">
         <pose>{lx:.3f} {ly:.3f} 0 0 0 {yaw:.4f}</pose>
@@ -185,8 +187,8 @@ def main():
     (out / "model.sdf").write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
 <!--
   GENERATED by tools/gen_rice_field.py - do not edit by hand, re-run the script.
-  Direct-seeded rice ~17 days after sowing, {a.size:g} x {a.size:g} m, tiles {a.tile:g} m.
-  Centre (world ENU): x = {a.center[0]:g}, y = {a.center[1]:g}, yaw = {a.yaw:g} deg   seed = {a.seed}
+  Direct-seeded rice ~17 days after sowing, {W:g} m across x {L:g} m along the banks,
+  tiles {a.tile:g} m, model origin = home (SE corner), yaw {math.degrees(YAW):.2f} deg, seed {a.seed}.
   Density {a.density_min:g}..{a.density_max:g} plants/m2, {a.classes} classes x {a.variants} variants
   Plants: {total_plants}   triangles: {total_tris}
   Ground truth per tile: model://rice_plot/ground_truth.csv
@@ -194,11 +196,11 @@ def main():
 <sdf version="1.9">
   <model name="rice_plot">
     <static>true</static>
-    <pose>{a.center[0]:.3f} {a.center[1]:.3f} {a.z:.3f} 0 0 {math.radians(a.yaw):.5f}</pose>
+    <pose>0 0 {a.z:.3f} 0 0 {YAW:.5f}</pose>
     <link name="link">
       <visual name="soil">
         <cast_shadows>false</cast_shadows>
-        <geometry><plane><normal>0 0 1</normal><size>{a.size:g} {a.size:g}</size></plane></geometry>
+        <geometry><mesh><uri>model://rice_plot/meshes/soil.stl</uri></mesh></geometry>
         <material>
           <ambient>0.22 0.18 0.13 1</ambient>
           <diffuse>0.30 0.25 0.18 1</diffuse>
@@ -212,9 +214,9 @@ def main():
 """)
 
     print(f"rice_plot -> {out}")
-    print(f"  {n}x{n} tiles, {len(counts)} meshes, {total_plants} plants, "
+    print(f"  {nx}x{ny} tiles ({W:g} x {L:g} m), {len(counts)} meshes, {total_plants} plants, "
           f"{total_tris / 1e6:.2f} M triangles")
-    print(f"  mean density {total_plants / a.size ** 2:.0f} plants/m2")
+    print(f"  mean density {total_plants / (W * L):.0f} plants/m2")
 
 
 if __name__ == "__main__":

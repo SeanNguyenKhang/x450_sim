@@ -2,16 +2,18 @@
 """
 Generate a lawn-mower (boustrophedon) survey mission as a QGroundControl .plan.
 
-Mission: TAKEOFF to ALT -> DO_CHANGE_SPEED -> survey lines -> RTL.
-Lines run along the paddy banks (plot +y axis, bearing 343.4 deg, see
-tools/field_site.py) and are spaced across the plot. The start corner is the
-one nearest to home (SE corner of the paddy).
+Pattern (see tools/field_site.py for the survey frame):
+  TAKEOFF at home (SE paddy corner) to ALT -> DO_CHANGE_SPEED
+  line 1: straight along the East (right) bank, from home to
+          START_MARGIN + LINE_LENGTH metres
+  turn left by SPACING, line 2 back down, turn left, line 3 up, ...
+  every line surveys LINE_LENGTH metres starting START_MARGIN inside the
+  South bank; lines stay within SURVEY_WIDTH to the left of the East bank
+  -> RTL (return altitude = RTL_RETURN_ALT in airframes/4050_gz_x450, 6 m)
 
-Line spacing:  --spacing S (m)  or  --overlap P (side overlap, 0..1).
-  Camera footprint across track = 2 * ALT * tan(HFOV / 2)
+Line spacing:  --spacing S (m)  or  --overlap P (side overlap, 0..1)
+  camera footprint across track = 2 * ALT * tan(HFOV / 2)
   spacing = footprint * (1 - overlap)
-  Lines are centred on the plot; n = ceil((plot - footprint) / spacing) + 1,
-  so the outer image edges always reach the plot edges.
 
 Usage (QGC: Plan -> Open... -> the .plan file -> Upload -> Fly: Start Mission):
   python3 tools/gen_lawnmower.py                           # 6 m, 1.5 m/s, 30 %
@@ -22,7 +24,8 @@ import json
 import math
 from pathlib import Path
 
-from field_site import HOME_LAT, HOME_LON, PLOT_SIZE, PLOT_YAW_DEG, enu_to_latlon, plot_to_enu
+from field_site import (BANK_BEARING_DEG, HOME_LAT, HOME_LON, LINE_LENGTH, START_MARGIN,
+                        SURVEY_WIDTH, enu_to_latlon, south_bank_v, survey_to_enu)
 
 REPO = Path(__file__).resolve().parent.parent
 CAM_HFOV = 1.855  # rad, models/caddx_cam (image width is across track)
@@ -44,29 +47,21 @@ def parse_args():
     return p.parse_args()
 
 
-def survey_lines(alt, spacing):
-    """Return list of ((x0,y0),(x1,y1)) lines in world ENU, serpentine order."""
-    footprint = 2 * alt * math.tan(CAM_HFOV / 2)
-    n = max(1, math.ceil(max(PLOT_SIZE - footprint, 0) / spacing) + 1)
-    half = PLOT_SIZE / 2
-    xs = [(i - (n - 1) / 2) * spacing for i in range(n)]   # plot frame, across
-
-    # pick the start corner nearest to home (world origin)
-    best = None
-    for order in (xs, xs[::-1]):
-        for y0 in (-half, half):
-            d = math.hypot(*plot_to_enu(order[0], y0))
-            if best is None or d < best[0]:
-                best = (d, order, y0)
-    _, order, y0 = best
-
-    lines = []
-    for i, x in enumerate(order):
-        a, b = (x, y0), (x, -y0)
-        if i % 2:
-            a, b = b, a
-        lines.append((plot_to_enu(*a), plot_to_enu(*b)))
-    return lines
+def survey_waypoints(spacing):
+    """Waypoints (world ENU) after takeoff at home, in flight order."""
+    n = int(math.floor(SURVEY_WIDTH / spacing + 1e-9)) + 1
+    wps = []
+    for k in range(n):
+        u = -k * spacing
+        v0 = south_bank_v(u) + START_MARGIN
+        bottom, top = survey_to_enu(u, v0), survey_to_enu(u, v0 + LINE_LENGTH)
+        if k == 0:
+            wps.append(top)                 # line 1 starts at home itself
+        elif k % 2:
+            wps += [top, bottom]            # turn left at the top, fly down
+        else:
+            wps += [bottom, top]            # turn left at the bottom, fly up
+    return wps, n
 
 
 def item(seq, cmd, frame, params):
@@ -78,12 +73,11 @@ def main():
     a = parse_args()
     footprint = 2 * a.alt * math.tan(CAM_HFOV / 2)
     spacing = a.spacing if a.spacing else footprint * (1 - a.overlap)
-    lines = survey_lines(a.alt, spacing)
+    wps, n = survey_waypoints(spacing)
 
     items = [item(1, NAV_TAKEOFF, FRAME_GLOBAL_REL_ALT,
                   [0, 0, 0, None, HOME_LAT, HOME_LON, a.alt]),
              item(2, DO_CHANGE_SPEED, FRAME_MISSION, [1, a.speed, -1, 0, 0, 0, 0])]
-    wps = [pt for ln in lines for pt in ln]
     for x, y in wps:
         lat, lon = enu_to_latlon(x, y)
         items.append(item(len(items) + 1, NAV_WAYPOINT, FRAME_GLOBAL_REL_ALT,
@@ -109,14 +103,14 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(plan, indent=2) + "\n")
 
-    length = sum(math.dist(p, q) for p, q in zip([(0, 0)] + wps, wps + [(0, 0)]))
-    side = 1 - spacing / footprint
+    path = [(0.0, 0.0)] + wps + [(0.0, 0.0)]
+    length = sum(math.dist(p, q) for p, q in zip(path, path[1:]))
     print(f"{out}")
     print(f"  alt {a.alt:g} m, speed {a.speed:g} m/s, footprint {footprint:.1f} m across track")
-    print(f"  {len(lines)} lines along bearing {(-PLOT_YAW_DEG) % 360:.1f} deg, "
-          f"spacing {spacing:.2f} m (side overlap {side * 100:.0f} %)")
+    print(f"  {n} lines along bearing {BANK_BEARING_DEG:g} deg, spacing {spacing:.2f} m "
+          f"(side overlap {(1 - spacing / footprint) * 100:.0f} %), {LINE_LENGTH:g} m each")
     print("  waypoints ENU: " + "  ".join(f"({x:.1f},{y:.1f})" for x, y in wps))
-    print(f"  path ~{length:.0f} m incl. transit, ~{length / a.speed / 60:.1f} min at {a.speed:g} m/s")
+    print(f"  path ~{length:.0f} m incl. return, ~{length / a.speed / 60:.1f} min at {a.speed:g} m/s")
 
 
 if __name__ == "__main__":
