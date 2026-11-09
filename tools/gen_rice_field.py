@@ -30,8 +30,9 @@ from pathlib import Path
 
 import numpy as np
 
+from field_site import PLOT_CENTER, PLOT_SIZE, enu_to_latlon
+
 REPO = Path(__file__).resolve().parent.parent
-HOME_LAT, HOME_LON = 10.578723, 106.416590  # world origin (worlds/rice.sdf)
 
 
 def parse_args():
@@ -39,9 +40,9 @@ def parse_args():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--out", type=Path, default=REPO / "models" / "rice_plot")
     p.add_argument("--seed", type=int, default=17)
-    p.add_argument("--size", type=float, default=50.0, help="plot side [m]")
+    p.add_argument("--size", type=float, default=PLOT_SIZE, help="plot side [m]")
     p.add_argument("--tile", type=float, default=2.0, help="tile side [m]")
-    p.add_argument("--center", type=float, nargs=2, default=[-6.0, 2.5],
+    p.add_argument("--center", type=float, nargs=2, default=list(PLOT_CENTER),
                    metavar=("X", "Y"), help="plot centre in world ENU [m]")
     p.add_argument("--z", type=float, default=0.02, help="ground height [m]")
     p.add_argument("--density-min", type=float, default=80.0, help="plants/m^2")
@@ -136,8 +137,6 @@ def main():
     # 2. place tiles
     dens = density_map(rng, n, a.density_min, a.density_max)
     cls = np.abs(dens[..., None] - levels).argmin(axis=-1)
-    m_per_deg_lat = 111320.0
-    m_per_deg_lon = 111320.0 * math.cos(math.radians(HOME_LAT))
 
     visuals, rows = [], []
     for iy in range(n):
@@ -160,9 +159,8 @@ def main():
         </material>
       </visual>""")
             p = counts[(c, v)]
-            rows.append(f"{ix},{iy},{wx:.3f},{wy:.3f},"
-                        f"{HOME_LAT + wy / m_per_deg_lat:.8f},"
-                        f"{HOME_LON + wx / m_per_deg_lon:.8f},"
+            lat, lon = enu_to_latlon(wx, wy)
+            rows.append(f"{ix},{iy},{wx:.3f},{wy:.3f},{lat:.8f},{lon:.8f},"
                         f"{c},{v},{p},{p / area:.1f}")
 
     # 3. ground_truth.csv
