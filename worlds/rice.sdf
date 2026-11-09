@@ -102,5 +102,10 @@
     <include>
       <uri>model://rice_field</uri>
     </include>
+
+    <!-- 3D rice plants, 50 x 50 m survey plot (GENERATED: tools/gen_rice_field.py) -->
+    <include>
+      <uri>model://rice_plot</uri>
+    </include>
   </world>
 </sdf>

@@ -11,6 +11,12 @@ AF="$PX4/ROMFS/px4fmu_common/init.d-posix/airframes"
 
 link() { ln -sfn "$1" "$2"; echo "  $(basename "$2") -> $1"; }
 
+# Generated rice plot (git-ignored). REGEN=1 bash scripts/setup.sh forces a rebuild.
+if [[ ! -f "$REPO/models/rice_plot/model.sdf" || "${REGEN:-0}" == "1" ]]; then
+  echo "Generating models/rice_plot:"
+  python3 "$REPO/tools/gen_rice_field.py"
+fi
+
 echo "Models:"
 for m in "$REPO"/models/*/; do
   n=$(basename "$m"); link "$REPO/models/$n" "$GZ/models/$n"
